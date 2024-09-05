@@ -10,6 +10,7 @@ use crate::versions_file::load_versions_db;
 use anyhow::{anyhow, bail, Context, Result};
 use console::style;
 use std::path::PathBuf;
+use std::time::Instant;
 
 fn update_channel(
     config_db: &mut JuliaupConfig,
@@ -115,14 +116,28 @@ fn update_channel(
 }
 
 pub fn run_command_update(channel: Option<String>, paths: &GlobalPaths) -> Result<()> {
+    println!("Getting current version");
+    let tinit = Instant::now();
     update_version_db(paths).with_context(|| "Failed to update versions db.")?;
+    let tupdate = Instant::now();
+    println!("Took {:?}.", tupdate - tinit);
 
+    println!("Loading versions DB");
+    let tver1 = Instant::now();
     let version_db =
         load_versions_db(paths).with_context(|| "`update` command failed to load versions db.")?;
+    let tver2 = Instant::now();
+    println!("Took {:?}.", tver2 - tver1);
 
+    println!("Loading config DB");
+    let tconf1 = Instant::now();
     let mut config_file = load_mut_config_db(paths)
         .with_context(|| "`update` command failed to load configuration data.")?;
+    let tconf2 = Instant::now();
+    println!("Took {:?}.", tconf2 - tconf1);
 
+    println!("Updating versions");
+    let tupd1 = Instant::now();
     match channel {
         None => {
             for (k, _) in config_file.data.installed_channels.clone() {
@@ -140,11 +155,18 @@ pub fn run_command_update(channel: Option<String>, paths: &GlobalPaths) -> Resul
             update_channel(&mut config_file.data, &channel, &version_db, false, paths)?;
         }
     };
+    let tupd2 = Instant::now();
+    println!("Took {:?}.", tupd2 - tupd1);
 
+    println!("Garbage collect & save config");
+    let tend1 = Instant::now();
     garbage_collect_versions(false, &mut config_file.data, paths)?;
 
     save_config_db(&mut config_file)
         .with_context(|| "`update` command failed to save configuration db.")?;
+
+    let tend2 = Instant::now();
+    println!("Took {:?}.", tend2 - tend1);
 
     Ok(())
 }
