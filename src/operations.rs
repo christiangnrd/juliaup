@@ -25,6 +25,7 @@ use std::io::Seek;
 use std::io::Write;
 #[cfg(not(windows))]
 use std::os::unix::fs::PermissionsExt;
+use std::time::Instant;
 use std::{
     io::Read,
     path::{Component::Normal, Path, PathBuf},
@@ -1270,10 +1271,17 @@ mod tests {
 }
 
 pub fn update_version_db(paths: &GlobalPaths) -> Result<()> {
+
+    println!("    Loading config DB");
+    let tconf1 = Instant::now();
     let mut config_file = load_mut_config_db(paths).with_context(|| {
         "`run_command_update_version_db` command failed to load configuration db."
     })?;
+    let tconf2 = Instant::now();
+    println!("    Took {:?}.", tconf2 - tconf1);
 
+    println!("    Determining juliaup channel");
+    let tchan1 = Instant::now();
     #[cfg(feature = "selfupdate")]
     let juliaup_channel = match &config_file.self_data.juliaup_channel {
         Some(juliaup_channel) => juliaup_channel.to_string(),
@@ -1283,7 +1291,11 @@ pub fn update_version_db(paths: &GlobalPaths) -> Result<()> {
     // TODO Figure out how we can learn about the correctn Juliaup channel here
     #[cfg(not(feature = "selfupdate"))]
     let juliaup_channel = "release".to_string();
+    let tchan2 = Instant::now();
+    println!("    Took {:?}.", tchan2 - tchan1);
 
+    println!("    Determining juliaup server");
+    let tserv1 = Instant::now();
     let juliaupserver_base =
         get_juliaserver_base_url().with_context(|| "Failed to get Juliaup server base URL.")?;
 
@@ -1305,11 +1317,25 @@ pub fn update_version_db(paths: &GlobalPaths) -> Result<()> {
                 juliaupserver_base, dbversion_url_path
             )
         })?;
+    let tserv2 = Instant::now();
+    println!("    Took {:?}.", tserv2 - tserv1);
 
+    println!("    Downloading juliaup db");
+    let tdldb1 = Instant::now();
     let online_dbversion = download_juliaup_version(&dbversion_url.to_string())
         .with_context(|| "Failed to download current version db version.")?;
+    let tdldb2 = Instant::now();
+    println!("    Took {:?}.", tdldb2 - tdldb1);
 
+
+    println!("    Downloading etags");
+    let tdlet1 = Instant::now();
     let direct_download_etags = download_direct_download_etags(&mut config_file.data)?;
+    let tdlet2 = Instant::now();
+    println!("    Took {:?}.", tdlet2 - tdlet1);
+
+    println!("    The rest");
+    let trest1 = Instant::now();
 
     for (channel, etag) in direct_download_etags {
         let channel_data = config_file.data.installed_channels.get(&channel).unwrap();
@@ -1389,7 +1415,8 @@ pub fn update_version_db(paths: &GlobalPaths) -> Result<()> {
         // If the bundled version is up-to-date we can delete any cached version db json file
         let _ = std::fs::remove_file(&paths.versiondb);
     }
-
+    let trest2 = Instant::now();
+    println!("    Took {:?}.", trest2 - trest1);
     Ok(())
 }
 
