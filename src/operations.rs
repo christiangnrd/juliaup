@@ -1357,6 +1357,9 @@ pub fn update_version_db(paths: &GlobalPaths) -> Result<()> {
         "{} for new Julia versions",
         style("Checking").green().bold()
     );
+    use std::time::Instant;
+    let now = Instant::now();
+
 
     let file_lock = get_read_lock(paths)?;
 
@@ -1427,10 +1430,21 @@ pub fn update_version_db(paths: &GlobalPaths) -> Result<()> {
             )
         })?;
 
+    let now2 = Instant::now();
     let online_dbversion = download_juliaup_version(&dbversion_url.to_string())
         .with_context(|| "Failed to download current version db version.")?;
+    let elapsed2 = now2.elapsed();
+    println!("Downloading juliaup version took: {:.2?}", elapsed2);
 
+    eprintln!(
+        "{} direct download etags",
+        style("Downloading").green().bold()
+    );
     let direct_download_etags = download_direct_download_etags(&old_config_file.data)?;
+    eprintln!(
+        "{} direct download etags",
+        style("Downloaded").green().bold()
+    );
 
     let bundled_dbversion = get_bundled_dbversion()
         .with_context(|| "Failed to determine the bundled version db version.")?;
@@ -1506,6 +1520,9 @@ pub fn update_version_db(paths: &GlobalPaths) -> Result<()> {
             _ => {}
         }
     }
+
+    let elapsed = now.elapsed();
+    println!("Updating versiondb took: {:.2?}", elapsed);
 
     new_config_file.data.last_version_db_update = Some(chrono::Utc::now());
 
@@ -1586,15 +1603,31 @@ fn download_direct_download_etags(config_data: &JuliaupConfig) -> Result<Vec<(St
 
     for (channel_name, channel) in &config_data.installed_channels {
         if let JuliaupConfigChannel::DirectDownloadChannel { url, .. } = channel {
-            let etag = client
+            eprintln!(
+                "{:?} direct download etags",
+                channel_name
+            );
+            use std::time::Instant;
+            let now = Instant::now();
+
+            let req = client
                 .head(url)
-                .send()?
+                .send()?;
+
+            let elapsed = now.elapsed();
+            println!("Request took: {:.2?}", elapsed);
+
+            let now2 = Instant::now();
+            let etag = req
                 .headers()
                 .get("etag")
                 .ok_or_else(|| anyhow!("ETag header not found in response"))?
                 .to_str()
                 .map_err(|e| anyhow!("Failed to parse ETag header: {}", e))?
                 .to_string();
+
+            let elapsed2 = now2.elapsed();
+            println!("Other stuff took: {:.2?}", elapsed2);
 
             requests.push((channel_name.clone(), etag));
         }
