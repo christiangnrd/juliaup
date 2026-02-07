@@ -40,7 +40,7 @@ use juliaup::command_selfuninstall::run_command_selfuninstall_unavailable;
 use log::info;
 
 fn main() -> Result<()> {
-    CompleteEnv::with_factory(|| Juliaup::command()).complete();
+    CompleteEnv::with_factory(Juliaup::command).complete();
 
     human_panic::setup_panic!(
         human_panic::Metadata::new("Juliaup", env!("CARGO_PKG_VERSION"))
