@@ -494,35 +494,7 @@ pub fn install_version(
                 )
             })?;
 
-        eprint!("Checking standard library notarization");
-        let _ = std::io::stdout().flush();
-
-        match std::process::Command::new(julia_path)
-            .env("JULIA_LOAD_PATH", "@stdlib")
-            .arg("--startup-file=no")
-            .arg("-e")
-            .arg("foreach(p -> begin print(stderr, '.'); @eval(import $(Symbol(p))) end, filter!(x -> isfile(joinpath(Sys.STDLIB, x, \"src\", \"$(x).jl\")), readdir(Sys.STDLIB)))")
-            // .stdout(std::process::Stdio::null())
-            // .stderr(std::process::Stdio::null())
-            // .stdin(std::process::Stdio::null())
-            .status()
-        {
-            Ok(exit_status) => {
-                if exit_status.success() {
-                    eprintln!("done.")
-                } else {
-                    eprintln!("failed with {}.", exit_status);
-                }
-            }
-            Err(e) => {
-                eprintln!("failed to execute Julia binary.");
-                eprintln!("Error: {}", e);
-                if e.raw_os_error() == Some(86) {
-                    eprintln!("This may indicate an architecture mismatch (e.g., trying to run an Intel binary on Apple Silicon or vice versa).");
-                }
-                eprintln!("Installation completed but notarization check was skipped.");
-            }
-        }
+        check_stdlib_notarization(julia_path.as_path());
     }
 
     Ok(())
@@ -1837,6 +1809,109 @@ fn download_direct_download_etags(
     }
 
     Ok(requests)
+}
+
+#[cfg(target_os = "macos")]
+pub fn codesign_pr_build_if_needed(channel: &str, paths: &GlobalPaths) -> Result<()> {
+    use std::io::{self, Write};
+
+    eprintln!("\nWARNING: PR builds are not code-signed for macOS.");
+    eprintln!("The Julia binary will fail to run unless you codesign it locally.");
+    eprint!("\nWould you like to automatically codesign this PR build now? [Y/n]: ");
+    io::stderr().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+
+    if input == "n" || input == "no" {
+        let dir_name = format!("julia-{}", channel);
+        eprintln!("\nSkipping codesigning. You can manually codesign later with:");
+        eprintln!(
+            "  codesign --force --sign - {}/{}/bin/julia",
+            paths.juliauphome.display(),
+            dir_name
+        );
+        eprintln!(
+            "  codesign --force --sign - {}/{}/lib/libjulia.*.dylib",
+            paths.juliauphome.display(),
+            dir_name
+        );
+        return Ok(());
+    }
+
+    let julia_dir = paths.juliauphome.join(format!("julia-{}", channel));
+    let julia_bin = julia_dir.join("bin").join("julia");
+
+    eprintln!("\nCodesigning Julia binary...");
+    codesign_file(&julia_bin)?;
+
+    // Find and codesign libjulia dylib
+    eprintln!("Codesigning Julia library...");
+    let lib_dir = julia_dir.join("lib");
+    if lib_dir.exists() {
+        for entry in std::fs::read_dir(&lib_dir)? {
+            let path = entry?.path();
+            if let Some(name) = path.file_name().and_then(|f| f.to_str()) {
+                if name.starts_with("libjulia.") && name.ends_with(".dylib") {
+                    codesign_file(&path)?;
+                }
+            }
+        }
+    }
+
+    eprintln!("✓ Codesigning completed successfully.");
+
+    // Run stdlib notarization check
+    check_stdlib_notarization(&julia_bin);
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn codesign_file(path: &std::path::Path) -> Result<()> {
+    use std::process::Command;
+
+    let status = Command::new("codesign")
+        .args(["--force", "--sign", "-"])
+        .arg(path)
+        .status()
+        .with_context(|| format!("Failed to execute codesign on {}", path.display()))?;
+
+    if !status.success() {
+        return Err(anyhow!("Failed to codesign {}", path.display()));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn check_stdlib_notarization(julia_path: &std::path::Path) {
+    eprint!("\nChecking standard library notarization");
+    let _ = std::io::stdout().flush();
+
+    match std::process::Command::new(julia_path)
+        .env("JULIA_LOAD_PATH", "@stdlib")
+        .arg("--startup-file=no")
+        .arg("-e")
+        .arg("foreach(p -> begin print(stderr, '.'); @eval(import $(Symbol(p))) end, filter!(x -> isfile(joinpath(Sys.STDLIB, x, \"src\", \"$(x).jl\")), readdir(Sys.STDLIB)))")
+        .status()
+    {
+        Ok(exit_status) => {
+            if exit_status.success() {
+                eprintln!("done.")
+            } else {
+                eprintln!("failed with {}.", exit_status);
+            }
+        }
+        Err(e) => {
+            eprintln!("failed to execute Julia binary.");
+            eprintln!("Error: {}", e);
+            if e.raw_os_error() == Some(86) {
+                eprintln!("This may indicate an architecture mismatch (e.g., trying to run an Intel binary on Apple Silicon or vice versa).");
+            }
+            eprintln!("Check was skipped.");
+        }
+    }
 }
 
 #[cfg(test)]
